@@ -47,6 +47,7 @@ import org.apache.http.util.EntityUtils;
 import org.apache.xmlbeans.XmlException;
 
 import noNamespace.BugzillaDocument;
+import noNamespace.AttachmentDocument.Attachment;
 import noNamespace.BugDocument.Bug;
 import noNamespace.LongDescDocument.LongDesc;
 
@@ -133,20 +134,24 @@ public class BugzillaImporter {
 		
 		ArrayList<NameValuePair> params = new ArrayList<NameValuePair>();
 		params.add(new BasicNameValuePair("title", title));
-		params.add(new BasicNameValuePair("body", 
-				issue.getReporter().getDomNode().getAttributes().getNamedItem("name").getNodeValue()
-				+ " (" + issue.getReporter().getDomNode().getFirstChild().getNodeValue() + ") reported on "
+		params.add(new BasicNameValuePair("body",
+				(issue.getReporter().getDomNode().getAttributes().getNamedItem("name") != null ?
+				        issue.getReporter().getDomNode().getAttributes().getNamedItem("name").getNodeValue() 
+				        + " (" + issue.getReporter().getDomNode().getFirstChild().getNodeValue() + ") reported on " :
+				            issue.getReporter().getDomNode().getFirstChild().getNodeValue() + " reported on ")
 				+ issue.getCreationTs().getDomNode().getFirstChild().getNodeValue() + "\n\n<pre>"
 				+ issue.getLongDescArray()[0].getThetext().getDomNode().getFirstChild().getNodeValue()
-				+ "</pre>"));
+				+ "</pre>\n\nThe original Bugzilla issue report should still be here: http://dev.helma.org/bugs/show_bug.cgi?id="
+				+ issue.getBugId().getDomNode().getFirstChild().getNodeValue()));
 		
 		System.out.println("Creating issue: " + title);
 		String response = post("issues/open/" + BugzillaImporter._repository, params);
 		String id = response.substring(response.indexOf("number: ")).substring(8, response.substring(response.indexOf("number: ")).indexOf("\n"));
 		
-		String[] labels = new String[2];
+		String[] labels = new String[3];
 		labels[0] = issue.getComponent().getDomNode().getFirstChild().getNodeValue();
 		labels[1] = issue.getBugSeverity().getDomNode().getFirstChild().getNodeValue();
+		labels[2] = issue.getVersion().getDomNode().getFirstChild().getNodeValue();
 
 		addLabel(id, "Bugzilla");
 		for (int j = 0; j <labels.length; j++) {
@@ -179,5 +184,4 @@ public class BugzillaImporter {
 		System.out.println("Adding comment");
 		post("issues/comment/" + BugzillaImporter._repository + "/" + id, params);
 	}
-
 }
