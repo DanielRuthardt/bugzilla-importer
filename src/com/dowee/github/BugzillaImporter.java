@@ -34,17 +34,23 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URIUtils;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 import org.apache.xmlbeans.XmlException;
+
+import com.esotericsoftware.yamlbeans.YamlConfig;
+import com.esotericsoftware.yamlbeans.YamlReader;
 
 import noNamespace.BugzillaDocument;
 import noNamespace.AttachmentDocument.Attachment;
@@ -78,7 +84,7 @@ public class BugzillaImporter {
 		System.err.println("	BugzillaImporter issues.xml test/test test hfei38dkej94fhgja239f9g0hkxmdewd");
 	}
 	
-	public static void main(String[] args) throws ClientProtocolException, URISyntaxException, IOException {
+	public static void main(String[] args) throws ClientProtocolException, URISyntaxException, IOException, InterruptedException {
 		if (args.length != 4) {
 			printUsage();
 			System.exit(1);
@@ -110,6 +116,7 @@ public class BugzillaImporter {
 		Bug[] bugs = bugzilla.getBugzilla().getBugArray();
 		for (int i = 0; i < bugs.length; i++) {
 			createIssue(bugs[i]);
+			Thread.currentThread().sleep(10000);
 		}
 	}
 	
@@ -128,9 +135,9 @@ public class BugzillaImporter {
 		return EntityUtils.toString(response.getEntity());
 	}
 	
-	public static void createIssue(Bug issue) throws ClientProtocolException, URISyntaxException, IOException {
-		String title = "#" + issue.getBugId().getDomNode().getFirstChild().getNodeValue() + ": "
-			+ issue.getShortDesc().getDomNode().getFirstChild().getNodeValue();
+    public static void createIssue(Bug issue) throws ClientProtocolException, URISyntaxException, IOException {
+		String title = issue.getShortDesc().getDomNode().getFirstChild().getNodeValue() + " (#"
+		    + issue.getBugId().getDomNode().getFirstChild().getNodeValue() + ")";
 		
 		ArrayList<NameValuePair> params = new ArrayList<NameValuePair>();
 		params.add(new BasicNameValuePair("title", title));
@@ -146,7 +153,19 @@ public class BugzillaImporter {
 		
 		System.out.println("Creating issue: " + title);
 		String response = post("issues/open/" + BugzillaImporter._repository, params);
-		String id = response.substring(response.indexOf("number: ")).substring(8, response.substring(response.indexOf("number: ")).indexOf("\n"));
+		
+		YamlConfig config = new YamlConfig();
+		config.setClassTag("timestamp", HashMap.class);
+		YamlReader reader = new YamlReader(response, config);
+		Map responseMap = (Map) reader.read();
+		Map issueMap = (Map) responseMap.get("issue");
+		String id = null;
+		if (issueMap != null && issueMap.containsKey("number")) {
+		    id = (String) issueMap.get("number");
+		} else {
+		    System.err.println(response);
+		    System.exit(1);
+		}
 		
 		String[] labels = new String[3];
 		labels[0] = issue.getComponent().getDomNode().getFirstChild().getNodeValue();
@@ -161,6 +180,11 @@ public class BugzillaImporter {
 		LongDesc[] comments = issue.getLongDescArray();
 		for (int j = 1; j < comments.length; j++) {
 			addComment(id, comments[j]);
+		}
+		
+		Attachment[] attachments = issue.getAttachmentArray();
+		for (int j = 0; j < attachments.length; j++) {
+		    addAttachment(id, attachments[j]);		    
 		}
 	}
 	
@@ -184,4 +208,31 @@ public class BugzillaImporter {
 		System.out.println("Adding comment");
 		post("issues/comment/" + BugzillaImporter._repository + "/" + id, params);
 	}
+	
+	public static void addAttachment(String id, Attachment attachment) throws ClientProtocolException, URISyntaxException, IOException {       
+        ArrayList<NameValuePair> params = new ArrayList<NameValuePair>();
+        String comment = "A file named \"" 
+            + attachment.getFilename().getDomNode().getFirstChild().getNodeValue() + "\" (" 
+            + attachment.getDesc().getDomNode().getFirstChild().getNodeValue() + ") was attached on "
+            + attachment.getDate().getDomNode().getFirstChild().getNodeValue();
+        
+        if (attachment.getType().getDomNode().getFirstChild().getNodeValue().equals("text/plain")) {
+            HttpGet get = new HttpGet("http://mia.helma.at/bugs/attachment.cgi?id=" 
+                    + attachment.getAttachid().getDomNode().getFirstChild().getNodeValue());
+            DefaultHttpClient http = new DefaultHttpClient();       
+            HttpResponse response = http.execute(get);
+            
+            comment += ":\n\n<code>" + EntityUtils.toString(response.getEntity()) + "</code>\n\n";
+        } else {
+            comment += ".\n\n";
+        }
+        
+        comment += "The original Bugzilla attachment should still be here: http://mia.helma.at/bugs/attachment.cgi?id="
+            + attachment.getAttachid().getDomNode().getFirstChild().getNodeValue();
+        
+        params.add(new BasicNameValuePair("comment", comment));
+        
+        System.out.println("Adding attachment");
+        post("issues/comment/" + BugzillaImporter._repository + "/" + id, params);
+    }
 }
